@@ -8,7 +8,7 @@ signed APK.
 
 |  |  |
 |---|---|
-| **Download** | [`WorldFrontier3D-v1.0.0.apk`](WorldFrontier3D-v1.0.0.apk) (signed, ~180 KB) |
+| **Download** | [`WorldFrontier3D-v1.0.1.apk`](WorldFrontier3D-v1.0.1.apk) (signed, ~190 KB) |
 | **Play in a browser** | open [`dist/index.html`](dist/index.html) |
 | **Engine** | three.js (WebGL 2) running inside a hardware-accelerated Android WebView |
 | **Package** | `com.worldfrontier.game3d` · minSdk 24 · targetSdk 34 |
@@ -100,7 +100,7 @@ brake and reverse, ENTER (F) to get out.
 
 ## Install the APK
 
-1. Copy `WorldFrontier3D-v1.0.0.apk` to an Android phone (Android 7.0 / API 24 or newer).
+1. Copy `WorldFrontier3D-v1.0.1.apk` to an Android phone (Android 7.0 / API 24 or newer).
 2. Allow "install from unknown sources" for your file manager or browser.
 3. Install and open. It runs fully offline — the game needs no network permission.
 
@@ -124,7 +124,7 @@ Open `dist/index.html` in any WebGL2 browser.
 bash android/build_apk.sh   # aapt2 -> javac -> d8 -> zipalign -> apksigner
 ```
 
-The script produces `android/WorldFrontier3D-v1.0.0.apk`. It uses the SDK
+The script produces `android/WorldFrontier3D-v1.0.1.apk`. It uses the SDK
 command-line tools directly, so no Gradle download is required. The project also
 opens in Android Studio (`android/app/src/main`).
 

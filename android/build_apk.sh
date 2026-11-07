@@ -25,7 +25,7 @@ $BT/aapt2 link -o build/base.apk \
   -A app/src/main/assets \
   --min-sdk-version 24 \
   --target-sdk-version 34 \
-  --version-code 1 --version-name 1.0.0 \
+  --version-code 2 --version-name 1.0.1 \
   --auto-add-overlay
 
 echo "[3/7] compiling java"
@@ -53,8 +53,8 @@ fi
 "$JAVA_HOME/bin/java" -Xmx384m -XX:CompressedClassSpaceSize=48m -XX:ReservedCodeCacheSize=48m \
   -Djava.io.tmpdir=/scratch/work/tmp -jar "$BT/lib/apksigner.jar" sign \
   --ks debug.keystore --ks-pass pass:android --key-pass pass:android \
-  --ks-key-alias androiddebugkey --out WorldFrontier3D-v1.0.0.apk build/aligned.apk
+  --ks-key-alias androiddebugkey --out WorldFrontier3D-v1.0.1.apk build/aligned.apk
 
-"$JAVA_HOME/bin/java" -Xmx384m -XX:CompressedClassSpaceSize=48m -jar "$BT/lib/apksigner.jar" verify --print-certs WorldFrontier3D-v1.0.0.apk | head -4
-ls -lh WorldFrontier3D-v1.0.0.apk
-$BT/aapt2 dump badging WorldFrontier3D-v1.0.0.apk | head -6
+"$JAVA_HOME/bin/java" -Xmx384m -XX:CompressedClassSpaceSize=48m -jar "$BT/lib/apksigner.jar" verify --print-certs WorldFrontier3D-v1.0.1.apk | head -4
+ls -lh WorldFrontier3D-v1.0.1.apk
+$BT/aapt2 dump badging WorldFrontier3D-v1.0.1.apk | head -6
