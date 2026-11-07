@@ -1,27 +1,161 @@
 // ---------------------------------------------------------------
-// ENTITIES: player character, vehicles, pedestrians, animals
+// ENTITIES: humanoid character, vehicles, pedestrians, animals
+// All geometry is generated here: smooth capsules for bodies,
+// bevelled extruded profiles for vehicle shells.
 // ---------------------------------------------------------------
 import * as THREE from 'three';
 import { clamp, lerp, damp, mulberry32 } from './util.js';
 import { heightAt, WATER_LEVEL, biomeAt, CITY_RADIUS } from './world.js';
 
-const SKIN = 0xd8a878, SHIRT = 0x2f6f8f, PANTS = 0x2b3340;
+const mat = (c, o = {}) => new THREE.MeshLambertMaterial({ color: c, ...o });
 
-// ------------------------------------------------------------------
+// ==================================================================
+// HUMANOID — shared by the player and every pedestrian
+// ==================================================================
+export function makeHuman(opt = {}) {
+  const simple = !!opt.simple;                 // low-poly variant for NPC crowds
+  const skinC = opt.skin ?? 0xd8a878;
+  const shirtC = opt.shirt ?? 0x2f6f8f;
+  const pantsC = opt.pants ?? 0x2b3340;
+  const hairC = opt.hair ?? 0x241a12;
+  const shoeC = opt.shoe ?? 0x16181c;
+
+  const skin = mat(skinC), shirt = mat(shirtC), pants = mat(pantsC);
+  const hairMat = mat(hairC), shoeMat = mat(shoeC);
+
+  const root = new THREE.Group();
+  const body = new THREE.Group();
+  root.add(body);
+
+  const chest = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.168, simple ? 0.52 : 0.30, simple ? 3 : 6, simple ? 10 : 16), shirt);
+  chest.scale.set(1.22, 1.0, 0.80);
+  chest.position.y = simple ? 1.12 : 1.24;
+  body.add(chest);
+
+  if (!simple) {
+    const waist = new THREE.Mesh(new THREE.CapsuleGeometry(0.142, 0.12, 5, 14), shirt);
+    waist.scale.set(1.18, 1.0, 0.82);
+    waist.position.y = 1.02;
+    body.add(waist);
+  }
+
+  const hips = new THREE.Mesh(new THREE.CapsuleGeometry(0.152, 0.10, simple ? 3 : 5, simple ? 10 : 14), pants);
+  hips.scale.set(1.16, 1.0, 0.88);
+  hips.position.y = 0.90;
+  body.add(hips);
+
+  if (!simple) {
+    [-1, 1].forEach((s) => {
+      const sh = new THREE.Mesh(new THREE.SphereGeometry(0.082, 12, 10), shirt);
+      sh.position.set(s * 0.185, 1.36, 0);
+      body.add(sh);
+    });
+  }
+
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.055, 0.10, simple ? 6 : 10), skin);
+  neck.position.y = 1.46;
+  body.add(neck);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.113, simple ? 12 : 20, simple ? 10 : 16), skin);
+  head.scale.set(0.94, 1.12, 1.02);
+  head.position.y = 1.60;
+  body.add(head);
+
+  const hair = new THREE.Mesh(
+    new THREE.SphereGeometry(0.118, simple ? 12 : 20, simple ? 8 : 14, 0, Math.PI * 2, 0, Math.PI * 0.40), hairMat);
+  hair.scale.set(0.96, 1.10, 1.03);
+  hair.position.y = 1.605;
+  body.add(hair);
+
+  if (!simple) {
+    const eyeGeo = new THREE.SphereGeometry(0.0155, 8, 6);
+    const eyeMat = mat(0x1d1712);
+    [-1, 1].forEach((s) => {
+      const e = new THREE.Mesh(eyeGeo, eyeMat);
+      e.position.set(s * 0.040, 1.617, 0.098);
+      body.add(e);
+    });
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.017, 0.048, 6), skin);
+    nose.rotation.x = Math.PI / 2;
+    nose.position.set(0, 1.588, 0.108);
+    body.add(nose);
+    const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.042, 0.008, 0.008), mat(0x8a5a52));
+    mouth.position.set(0, 1.552, 0.100);
+    body.add(mouth);
+  }
+
+  const mkArm = (side) => {
+    const g = new THREE.Group();
+    g.position.set(side * 0.205, 1.355, 0);
+    if (simple) {
+      const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.050, 0.46, 3, 8), shirt);
+      arm.position.y = -0.30;
+      g.add(arm);
+    } else {
+      const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.19, 4, 10), shirt);
+      upper.position.y = -0.125;
+      const fore = new THREE.Mesh(new THREE.CapsuleGeometry(0.045, 0.185, 4, 10), skin);
+      fore.position.y = -0.395;
+      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.050, 10, 8), skin);
+      hand.scale.set(1.0, 1.2, 0.72);
+      hand.position.y = -0.535;
+      g.add(upper, fore, hand);
+    }
+    body.add(g);
+    return g;
+  };
+  const armL = mkArm(-1), armR = mkArm(1);
+
+  const mkLeg = (side) => {
+    const g = new THREE.Group();
+    g.position.set(side * 0.093, 0.895, 0);
+    if (simple) {
+      const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.068, 0.60, 3, 8), pants);
+      leg.position.y = -0.38;
+      g.add(leg);
+    } else {
+      const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.074, 0.25, 4, 10), pants);
+      thigh.position.y = -0.185;
+      const shin = new THREE.Mesh(new THREE.CapsuleGeometry(0.058, 0.27, 4, 10), pants);
+      shin.position.y = -0.545;
+      g.add(thigh, shin);
+    }
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.098, 0.068, 0.235), shoeMat);
+    foot.position.set(0, -0.795, 0.055);
+    g.add(foot);
+    body.add(g);
+    return g;
+  };
+  const legL = mkLeg(-1), legR = mkLeg(1);
+
+  root.traverse((o) => { if (o.isMesh) { o.castShadow = !simple; o.receiveShadow = false; } });
+  const s = opt.scale ?? 1;
+  if (s !== 1) root.scale.setScalar(s);
+  return { root, body, head, armL, armR, legL, legR };
+}
+
+// ==================================================================
 // PLAYER
-// ------------------------------------------------------------------
+// ==================================================================
 export class Player {
   constructor(scene) {
     this.scene = scene;
-    this.root = new THREE.Group();
-    this.pos = new THREE.Vector3(12, 0, 60);
+    const h = makeHuman({ shirt: 0x2f6f8f, pants: 0x2b3340, skin: 0xd8a878, hair: 0x241a12 });
+    this.root = h.root;
+    this.body = h.body;
+    this.head = h.head;
+    this.armL = h.armL; this.armR = h.armR;
+    this.legL = h.legL; this.legR = h.legR;
+
+    this.pos = new THREE.Vector3(41, 0, 61);
     this.vel = new THREE.Vector3();
     this.heading = 0;
     this.onGround = true;
     this.state = 'idle';
     this.speed = 0;
     this.walkPhase = 0;
-    this.radius = 0.42;
+    this.radius = 0.4;
     this.height = 1.75;
     this.crouch = 0;
     this.swimming = false;
@@ -30,55 +164,11 @@ export class Player {
     this.vehicle = null;
     this.health = 100;
     this.stamina = 100;
-    this.build();
     scene.add(this.root);
   }
 
-  build() {
-    const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
-    const g = new THREE.Group();
-    this.body = new THREE.Group();
-    g.add(this.body);
-
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.72, 0.34), mat(SHIRT));
-    torso.position.y = 1.18; torso.castShadow = true;
-    this.body.add(torso);
-
-    const hips = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.22, 0.32), mat(PANTS));
-    hips.position.y = 0.78; this.body.add(hips);
-
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.21, 12, 10), mat(SKIN));
-    head.position.y = 1.72; head.castShadow = true;
-    this.head = head; this.body.add(head);
-
-    const hair = new THREE.Mesh(new THREE.SphereGeometry(0.215, 12, 8, 0, 6.3, 0, 1.2), mat(0x241a12));
-    hair.position.y = 1.735; this.body.add(hair);
-
-    const nose = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.07, 0.07), mat(SKIN));
-    nose.position.set(0, 1.71, -0.2); this.body.add(nose);
-
-    const armGeo = new THREE.BoxGeometry(0.16, 0.62, 0.18);
-    this.armL = new THREE.Mesh(armGeo, mat(SHIRT)); this.armL.position.set(-0.38, 1.18, 0);
-    this.armR = new THREE.Mesh(armGeo, mat(SHIRT)); this.armR.position.set(0.38, 1.18, 0);
-    this.armL.castShadow = this.armR.castShadow = true;
-    this.body.add(this.armL, this.armR);
-
-    const legGeo = new THREE.BoxGeometry(0.2, 0.76, 0.22);
-    this.legL = new THREE.Mesh(legGeo, mat(PANTS)); this.legL.position.set(-0.15, 0.42, 0);
-    this.legR = new THREE.Mesh(legGeo, mat(PANTS)); this.legR.position.set(0.15, 0.42, 0);
-    this.legL.castShadow = this.legR.castShadow = true;
-    this.body.add(this.legL, this.legR);
-
-    // pivot fix: legs/arms rotate from the top
-    [this.armL, this.armR].forEach((a) => { a.geometry.translate(0, -0.31, 0); a.position.y = 1.48; });
-    [this.legL, this.legR].forEach((a) => { a.geometry.translate(0, -0.38, 0); a.position.y = 0.8; });
-
-    this.root.add(g);
-    this.model = g;
-  }
-
   respawn(x, z) {
-    this.pos.set(x, heightAt(x, z) + 0.1, z);
+    this.pos.set(x, heightAt(x, z) + 0.05, z);
     this.vel.set(0, 0, 0);
   }
 
@@ -88,17 +178,21 @@ export class Player {
 
     if (this.vehicle) { this.syncInVehicle(); this.animate(dt, 0); return; }
 
-    // ---- desired movement ----
     const run = input.run ? 1 : 0;
-    const crouchKey = input.crouch;
-    this.crouch = damp(this.crouch, crouchKey ? 1 : 0, 12, dt);
+    this.crouch = damp(this.crouch, input.crouch ? 1 : 0, 12, dt);
 
-    const camYaw = camera.yaw;
+    // ---- camera-relative movement (fixed orientation) ----
+    // camera sits at focus + dist*(sin yaw, cos yaw), so "forward" is
+    // the opposite of that offset: (-sin yaw, -cos yaw).
+    const yaw = camera.yaw;
     let mx = input.moveX, mz = input.moveZ;
     const mag = Math.hypot(mx, mz);
     if (mag > 1) { mx /= mag; mz /= mag; }
-    const wx = Math.cos(camYaw) * mx - Math.sin(camYaw) * mz;
-    const wz = Math.sin(camYaw) * mx + Math.cos(camYaw) * mz;
+    const fwdX = -Math.sin(yaw), fwdZ = -Math.cos(yaw);   // away from camera
+    const rightX = -fwdZ, rightZ = fwdX;                  // 90° right of forward
+    const forwardAmount = -mz;                            // stick/W up = -1 = forward
+    const wx = fwdX * forwardAmount + rightX * mx;
+    const wz = fwdZ * forwardAmount + rightZ * mx;
 
     let maxSpeed = 3.4;
     if (run && this.stamina > 2) maxSpeed = 7.2;
@@ -108,20 +202,15 @@ export class Player {
     if (this.climbing) maxSpeed = 1.2;
 
     const moving = Math.hypot(wx, wz) > 0.05;
-    const targetVX = wx * maxSpeed, targetVZ = wz * maxSpeed;
-    const accel = this.onGround ? 12 : 4;
-    this.vel.x = damp(this.vel.x, targetVX, accel, dt);
-    this.vel.z = damp(this.vel.z, targetVZ, accel, dt);
+    this.vel.x = damp(this.vel.x, wx * maxSpeed, this.onGround ? 12 : 4, dt);
+    this.vel.z = damp(this.vel.z, wz * maxSpeed, this.onGround ? 12 : 4, dt);
 
-    // stamina
     const sprinting = (run || input.sprint) && moving && this.onGround && !inWater;
     this.stamina = clamp(this.stamina + (sprinting ? -18 : 14) * dt, 0, 100);
 
-    // gravity / swim / climb
     if (inWater) {
       this.swimming = true;
-      const targetY = WATER_LEVEL + 0.55;
-      this.pos.y = damp(this.pos.y, targetY + (input.jump ? 0.6 : 0), 6, dt);
+      this.pos.y = damp(this.pos.y, WATER_LEVEL + 0.55 + (input.jump ? 0.6 : 0), 6, dt);
       this.vel.y = 0; this.onGround = false;
     } else {
       this.swimming = false;
@@ -131,18 +220,17 @@ export class Player {
       if (this.pos.y <= gy + 0.02) { this.pos.y = gy; this.vel.y = 0; this.onGround = true; }
     }
 
-    // climb: hold jump against a steep slope
     const steep = heightAt(this.pos.x + wx, this.pos.z + wz) - gy;
     this.climbing = !inWater && steep > 0.55 && (input.jump || this.climbing) && moving;
     if (this.climbing) {
-      this.pos.y += 2.1 * dt;
-      this.vel.y = 0;
+      this.pos.y += 2.1 * dt; this.vel.y = 0;
       this.pos.x += wx * 0.5 * dt; this.pos.z += wz * 0.5 * dt;
     }
 
     this.pos.x += this.vel.x * dt;
     this.pos.z += this.vel.z * dt;
 
+    // model faces +Z, so heading = atan2(x, z)
     if (moving) this.heading = Math.atan2(this.vel.x, this.vel.z);
 
     this.speed = Math.hypot(this.vel.x, this.vel.z);
@@ -150,7 +238,6 @@ export class Player {
     this.root.rotation.y = this.heading;
     this.animate(dt, this.speed);
 
-    // state label for HUD
     this.state = this.swimming ? 'swimming' : this.climbing ? 'climbing'
       : !this.onGround ? 'jumping' : this.crouch > 0.5 ? 'crouching'
       : this.speed > 8 ? 'sprinting' : this.speed > 4.5 ? 'running'
@@ -168,10 +255,10 @@ export class Player {
       this.armR.rotation.x = -1.4 + Math.sin(this.walkPhase * 3 + 1) * 0.7;
       this.legL.rotation.x = Math.sin(this.walkPhase * 3) * 0.4;
       this.legR.rotation.x = Math.sin(this.walkPhase * 3 + 1) * 0.4;
-      this.body.rotation.x = -1.1;
+      this.body.rotation.x = -1.15;
       this.body.position.y = 0;
     } else if (this.sitting) {
-      this.body.rotation.x = 0; this.body.position.y = -0.35;
+      this.body.rotation.x = 0; this.body.position.y = -0.42;
       this.legL.rotation.x = -1.5; this.legR.rotation.x = -1.5;
       this.armL.rotation.x = -0.6; this.armR.rotation.x = -0.6;
     } else if (this.climbing) {
@@ -181,12 +268,12 @@ export class Player {
       this.legL.rotation.x = s * 0.7; this.legR.rotation.x = s2 * 0.7;
     } else {
       this.body.rotation.x = 0;
-      this.body.position.y = -this.crouch * 0.45;
-      this.legL.rotation.x = s * amp * 0.85;
-      this.legR.rotation.x = s2 * amp * 0.85;
-      this.armL.rotation.x = s2 * amp * 0.7;
-      this.armR.rotation.x = s * amp * 0.7;
-      this.body.position.y += Math.abs(Math.sin(this.walkPhase * 2.2)) * amp * 0.05;
+      this.body.position.y = -this.crouch * 0.42;
+      this.legL.rotation.x = s * amp * 0.9;
+      this.legR.rotation.x = s2 * amp * 0.9;
+      this.armL.rotation.x = s2 * amp * 0.75;
+      this.armR.rotation.x = s * amp * 0.75;
+      this.body.position.y += Math.abs(Math.sin(this.walkPhase * 2.2)) * amp * 0.04;
     }
   }
 
@@ -199,21 +286,46 @@ export class Player {
   }
 }
 
-// ------------------------------------------------------------------
-// VEHICLES
-// ------------------------------------------------------------------
+// ==================================================================
+// VEHICLES — bevelled extruded shells
+// ==================================================================
 export const VEHICLE_TYPES = {
-  sedan:    { name: 'Sedan',       kind: 'car',   w: 1.9, h: 1.35, l: 4.4, color: 0x9aa4b2, maxSpeed: 34, accel: 12, turn: 1.7, mass: 1.0, seats: 4 },
-  sports:   { name: 'Sports Car',  kind: 'car',   w: 2.0, h: 1.1,  l: 4.3, color: 0xc0392b, maxSpeed: 52, accel: 20, turn: 1.9, mass: 0.85, seats: 2 },
-  supercar: { name: 'Supercar',    kind: 'car',   w: 2.05, h: 1.0, l: 4.6, color: 0xf1c40f, maxSpeed: 66, accel: 26, turn: 2.0, mass: 0.8, seats: 2 },
-  bike:     { name: 'Motorcycle',  kind: 'bike',  w: 0.8, h: 1.1,  l: 2.1, color: 0x222831, maxSpeed: 44, accel: 22, turn: 2.4, mass: 0.4, seats: 1 },
-  scooter:  { name: 'Scooter',     kind: 'bike',  w: 0.7, h: 1.0,  l: 1.8, color: 0x3fa9f5, maxSpeed: 22, accel: 12, turn: 2.6, mass: 0.3, seats: 1 },
-  bus:      { name: 'City Bus',    kind: 'big',   w: 2.6, h: 3.1,  l: 11.0, color: 0x2e8b57, maxSpeed: 24, accel: 7, turn: 1.0, mass: 3.0, seats: 30 },
-  truck:    { name: 'Truck',       kind: 'big',   w: 2.5, h: 3.0,  l: 8.5, color: 0xd35400, maxSpeed: 26, accel: 8, turn: 1.2, mass: 2.6, seats: 2 },
-  boat:     { name: 'Motorboat',   kind: 'boat',  w: 2.4, h: 1.2,  l: 6.0, color: 0xecf0f1, maxSpeed: 30, accel: 10, turn: 1.4, mass: 1.4, seats: 4 },
-  heli:     { name: 'Helicopter',  kind: 'air',   w: 3.0, h: 2.2,  l: 6.5, color: 0x34495e, maxSpeed: 55, accel: 14, turn: 1.6, mass: 1.6, seats: 3 },
-  plane:    { name: 'Light Plane', kind: 'air',   w: 9.0, h: 2.2,  l: 8.0, color: 0xdfe6e9, maxSpeed: 85, accel: 16, turn: 1.1, mass: 2.0, seats: 2 },
+  sedan:    { name: 'Sedan',       kind: 'car',   w: 1.86, h: 1.44, l: 4.42, color: 0x9aa4b2, maxSpeed: 34, accel: 12, turn: 1.7, mass: 1.0, seats: 4 },
+  sports:   { name: 'Sports Car',  kind: 'car',   w: 1.94, h: 1.20, l: 4.34, color: 0xc0392b, maxSpeed: 52, accel: 20, turn: 1.9, mass: 0.85, seats: 2 },
+  supercar: { name: 'Supercar',    kind: 'car',   w: 2.02, h: 1.06, l: 4.62, color: 0xf1c40f, maxSpeed: 66, accel: 26, turn: 2.0, mass: 0.8, seats: 2 },
+  bike:     { name: 'Motorcycle',  kind: 'bike',  w: 0.82, h: 1.10, l: 2.10, color: 0x222831, maxSpeed: 44, accel: 22, turn: 2.4, mass: 0.4, seats: 1 },
+  scooter:  { name: 'Scooter',     kind: 'bike',  w: 0.72, h: 1.02, l: 1.80, color: 0x3fa9f5, maxSpeed: 22, accel: 12, turn: 2.6, mass: 0.3, seats: 1 },
+  bus:      { name: 'City Bus',    kind: 'big',   w: 2.62, h: 3.10, l: 11.0, color: 0x2e8b57, maxSpeed: 24, accel: 7, turn: 1.0, mass: 3.0, seats: 30 },
+  truck:    { name: 'Truck',       kind: 'big',   w: 2.52, h: 3.05, l: 8.50, color: 0xd35400, maxSpeed: 26, accel: 8, turn: 1.2, mass: 2.6, seats: 2 },
+  boat:     { name: 'Motorboat',   kind: 'boat',  w: 2.40, h: 1.25, l: 6.00, color: 0xecf0f1, maxSpeed: 30, accel: 10, turn: 1.4, mass: 1.4, seats: 4 },
+  heli:     { name: 'Helicopter',  kind: 'air',   w: 3.00, h: 2.20, l: 6.50, color: 0x34495e, maxSpeed: 55, accel: 14, turn: 1.6, mass: 1.6, seats: 3 },
+  plane:    { name: 'Light Plane', kind: 'air',   w: 9.00, h: 2.20, l: 8.00, color: 0xdfe6e9, maxSpeed: 85, accel: 16, turn: 1.1, mass: 2.0, seats: 2 },
 };
+
+// side silhouettes, x = along the car (front is +x), y = height
+const PROFILES = {
+  sedan: [[-2.21,0.26],[-2.21,0.80],[-1.60,0.92],[-1.02,1.36],[-0.34,1.42],[0.54,1.41],[1.16,0.99],[1.78,0.90],[2.16,0.78],[2.21,0.46],[2.10,0.26]],
+  sports: [[-2.17,0.22],[-2.17,0.70],[-1.62,0.80],[-0.92,1.14],[-0.10,1.20],[0.62,1.10],[1.28,0.86],[1.92,0.80],[2.17,0.62],[2.17,0.34],[2.05,0.20]],
+  supercar: [[-2.31,0.20],[-2.31,0.62],[-1.74,0.72],[-1.02,0.98],[-0.14,1.04],[0.52,0.96],[1.16,0.76],[1.92,0.72],[2.28,0.56],[2.31,0.32],[2.16,0.18]],
+  bus: [[-5.50,0.30],[-5.50,3.00],[-5.10,3.10],[5.10,3.10],[5.50,2.90],[5.50,0.44],[5.20,0.30]],
+  truck: [[-4.25,0.34],[-4.25,3.00],[-1.10,3.00],[-1.10,0.34]],
+  boat: [[-3.00,0.30],[-2.40,0.85],[-0.40,1.05],[1.60,0.95],[2.70,0.60],[3.00,0.30],[2.60,0.05],[-2.70,0.05]],
+};
+
+function extrudeProfile(profile, width, bevel = 0.055) {
+  const shape = new THREE.Shape();
+  profile.forEach(([x, y], i) => (i ? shape.lineTo(x, y) : shape.moveTo(x, y)));
+  shape.closePath();
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth: Math.max(0.05, width - bevel * 2),
+    bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel,
+    bevelSegments: 3, curveSegments: 2, steps: 1,
+  });
+  geo.translate(0, 0, -(width - bevel * 2) / 2);
+  geo.rotateY(-Math.PI / 2);      // nose (+x) becomes +z, width along x
+  geo.computeVertexNormals();
+  return geo;
+}
 
 export class Vehicle {
   constructor(type, scene) {
@@ -230,112 +342,196 @@ export class Vehicle {
     this.fuel = 100;
     this.wheels = [];
     this.rotor = null;
-    this.built = false;
     this.build();
     scene.add(this.root);
   }
 
   build() {
     const c = this.cfg;
-    const mat = (col, opts = {}) => new THREE.MeshLambertMaterial({ color: col, ...opts });
     const g = new THREE.Group();
-    const body = mat(c.color);
-    const glass = mat(0x22303c, { transparent: true, opacity: 0.72 });
-    const dark = mat(0x1a1a1c);
-    const lightMat = new THREE.MeshLambertMaterial({ color: 0xfff2b0, emissive: 0xffe08a, emissiveIntensity: 0.6 });
+    const paint = mat(c.color);
+    const paintDark = mat(new THREE.Color(c.color).multiplyScalar(0.65).getHex());
+    const glass = mat(0x1b2a36, { transparent: true, opacity: 0.78 });
+    const dark = mat(0x14161a);
+    const chrome = mat(0xb9c0c8);
+    const head = new THREE.MeshLambertMaterial({ color: 0xfff6d5, emissive: 0xffe9a8, emissiveIntensity: 0.85 });
+    const tail = new THREE.MeshLambertMaterial({ color: 0xff3b2f, emissive: 0x8c1207, emissiveIntensity: 0.9 });
 
-    if (c.kind === 'air') {
-      const fuse = new THREE.Mesh(new THREE.CapsuleGeometry(c.h * 0.32, c.l * 0.6, 6, 10), body);
-      fuse.rotation.z = Math.PI / 2; fuse.position.y = c.h * 0.5;
-      g.add(fuse);
-      const canopy = new THREE.Mesh(new THREE.SphereGeometry(c.h * 0.34, 10, 8), glass);
-      canopy.position.set(0, c.h * 0.62, -c.l * 0.18); canopy.scale.set(1, 0.8, 1.5);
-      g.add(canopy);
-      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.25, c.h * 0.9, c.l * 0.4), body);
-      tail.position.set(0, c.h * 0.55, c.l * 0.45); g.add(tail);
-      if (this.type === 'heli') {
-        const rotor = new THREE.Mesh(new THREE.BoxGeometry(c.w * 2.2, 0.06, 0.34), dark);
-        rotor.position.y = c.h * 1.05; g.add(rotor); this.rotor = rotor;
-        const tailRotor = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.9, 0.14), dark);
-        tailRotor.position.set(0.2, c.h * 0.6, c.l * 0.6); g.add(tailRotor); this.tailRotor = tailRotor;
-        const skidGeo = new THREE.BoxGeometry(0.12, 0.1, c.l * 0.7);
-        [-0.6, 0.6].forEach((x) => {
-          const sk = new THREE.Mesh(skidGeo, dark); sk.position.set(x, 0.08, 0); g.add(sk);
-          const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 0.1), dark);
-          leg.position.set(x, 0.3, 0); g.add(leg);
-        });
-      } else {
-        const wing = new THREE.Mesh(new THREE.BoxGeometry(c.w * 2.0, 0.16, 1.5), body);
-        wing.position.set(0, c.h * 0.5, -0.2); g.add(wing);
-        const fin = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.1, 0.9), body);
-        fin.position.set(0, c.h * 0.85, c.l * 0.45); g.add(fin);
-        const prop = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.6, 0.08), dark);
-        prop.position.set(0, c.h * 0.5, -c.l * 0.52); g.add(prop); this.rotor = prop;
-      }
-    } else if (c.kind === 'boat') {
-      const hull = new THREE.Mesh(new THREE.BoxGeometry(c.w, c.h * 0.55, c.l), body);
-      hull.position.y = c.h * 0.3; g.add(hull);
-      const bow = new THREE.Mesh(new THREE.ConeGeometry(c.w * 0.5, c.l * 0.45, 4), body);
-      bow.rotation.x = -Math.PI / 2; bow.rotation.y = Math.PI / 4;
-      bow.position.set(0, c.h * 0.3, -c.l * 0.62); bow.scale.set(1, 1, 0.55); g.add(bow);
-      const cabin = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.7, c.h * 0.5, c.l * 0.32), glass);
-      cabin.position.set(0, c.h * 0.72, c.l * 0.05); g.add(cabin);
-    } else if (c.kind === 'bike') {
-      const frame = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.5, c.h * 0.35, c.l * 0.75), body);
-      frame.position.y = c.h * 0.45; g.add(frame);
-      const tank = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.45, c.h * 0.2, c.l * 0.3), body);
-      tank.position.set(0, c.h * 0.62, -0.1); g.add(tank);
-      const seat = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.4, 0.12, c.l * 0.3), dark);
-      seat.position.set(0, c.h * 0.68, c.l * 0.18); g.add(seat);
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.9, 0.07, 0.07), dark);
-      bar.position.set(0, c.h * 0.78, -c.l * 0.32); g.add(bar);
-      const rider = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.5, 4, 8), mat(0x2c3e50));
-      rider.position.set(0, c.h * 0.95, c.l * 0.1); g.add(rider);
-    } else {
-      const h = c.h;
-      const chassis = new THREE.Mesh(new THREE.BoxGeometry(c.w, h * 0.45, c.l), body);
-      chassis.position.y = h * 0.42; g.add(chassis);
-      if (c.kind === 'big') {
-        const cabin = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.95, h * 0.5, c.l * 0.28), glass);
-        cabin.position.set(0, h * 0.78, -c.l * 0.32); g.add(cabin);
-        const box = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.98, h * 0.62, c.l * 0.6), body);
-        box.position.set(0, h * 0.72, c.l * 0.14); g.add(box);
-      } else {
-        const cabin = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.86, h * 0.38, c.l * 0.45), glass);
-        cabin.position.set(0, h * 0.72, c.l * 0.02); g.add(cabin);
-        const roof = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.82, h * 0.1, c.l * 0.4), body);
-        roof.position.set(0, h * 0.92, c.l * 0.02); g.add(roof);
-        if (this.type === 'supercar' || this.type === 'sports') {
-          const spoiler = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.9, 0.08, 0.4), dark);
-          spoiler.position.set(0, h * 0.78, c.l * 0.48); g.add(spoiler);
-        }
-      }
-      [-1, 1].forEach((sx) => {
-        const hl = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.16, 0.08), lightMat);
-        hl.position.set(sx * c.w * 0.32, h * 0.45, -c.l * 0.5); g.add(hl);
-        const tl = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.12, 0.06), new THREE.MeshLambertMaterial({ color: 0xff3322, emissive: 0x881100, emissiveIntensity: 0.7 }));
-        tl.position.set(sx * c.w * 0.34, h * 0.45, c.l * 0.5); g.add(tl);
-      });
-      // wheels
-      const wr = c.kind === 'big' ? 0.55 : c.kind === 'bike' ? 0.34 : 0.36;
-      const wgeo = new THREE.CylinderGeometry(wr, wr, 0.26, 10);
-      wgeo.rotateZ(Math.PI / 2);
-      const wmat = mat(0x101012);
-      const axles = c.kind === 'big' ? [-0.34, -0.14, 0.26, 0.44] : [-0.32, 0.32];
-      axles.forEach((az) => {
+    const addWheels = (radius, halfTrack, zFront, zRear) => {
+      const tire = new THREE.CylinderGeometry(radius, radius, radius * 0.62, 20);
+      tire.rotateZ(Math.PI / 2);
+      const rim = new THREE.CylinderGeometry(radius * 0.58, radius * 0.58, radius * 0.64, 12);
+      rim.rotateZ(Math.PI / 2);
+      const tireMat = mat(0x0e0f11), rimMat = mat(0x9aa2ab);
+      [zFront, zRear].forEach((z) => {
         [-1, 1].forEach((sx) => {
-          const w = new THREE.Mesh(wgeo, wmat);
-          w.position.set(sx * (c.w * 0.5), wr, az * c.l);
+          const w = new THREE.Mesh(tire, tireMat);
+          const r = new THREE.Mesh(rim, rimMat);
+          w.add(r);
+          w.position.set(sx * halfTrack, radius, z);
           w.castShadow = true;
           g.add(w); this.wheels.push(w);
         });
       });
+    };
+
+    if (c.kind === 'air') {
+      const fuseGeo = new THREE.CapsuleGeometry(c.h * 0.30, c.l * 0.62, 8, 16);
+      fuseGeo.rotateX(Math.PI / 2);
+      const fuse = new THREE.Mesh(fuseGeo, paint);
+      fuse.position.y = c.h * 0.48;
+      g.add(fuse);
+      const canopy = new THREE.Mesh(new THREE.SphereGeometry(c.h * 0.30, 16, 12), glass);
+      canopy.scale.set(1, 0.85, 1.7);
+      canopy.position.set(0, c.h * 0.62, -c.l * 0.10);
+      g.add(canopy);
+      if (this.type === 'heli') {
+        const boom = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.16, c.l * 0.55, 10), paint);
+        boom.rotation.x = Math.PI / 2; boom.position.set(0, c.h * 0.5, c.l * 0.48); g.add(boom);
+        const fin = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.75, 0.5), paintDark);
+        fin.position.set(0, c.h * 0.75, c.l * 0.72); g.add(fin);
+        const rotor = new THREE.Mesh(new THREE.BoxGeometry(c.w * 2.1, 0.05, 0.30), dark);
+        rotor.position.y = c.h * 1.02; g.add(rotor); this.rotor = rotor;
+        const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, c.h * 0.5, 8), chrome);
+        mast.position.y = c.h * 0.78; g.add(mast);
+        const tailRotor = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.85, 0.12), dark);
+        tailRotor.position.set(0.12, c.h * 0.78, c.l * 0.74); g.add(tailRotor); this.tailRotor = tailRotor;
+        [-0.62, 0.62].forEach((x) => {
+          const skid = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, c.l * 0.72, 8), chrome);
+          skid.rotation.x = Math.PI / 2; skid.position.set(x, 0.06, 0); g.add(skid);
+          const strut = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.55, 6), dark);
+          strut.position.set(x, 0.33, 0); g.add(strut);
+        });
+      } else {
+        const wingGeo = new THREE.BoxGeometry(c.w * 1.9, 0.13, 1.55);
+        wingGeo.translate(0, 0, 0);
+        const wing = new THREE.Mesh(wingGeo, paint);
+        wing.position.set(0, c.h * 0.48, -0.10); g.add(wing);
+        const fin = new THREE.Mesh(new THREE.BoxGeometry(0.10, 1.05, 0.85), paintDark);
+        fin.position.set(0, c.h * 0.88, c.l * 0.44); g.add(fin);
+        const prop = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.55, 0.06), dark);
+        prop.position.set(0, c.h * 0.48, -c.l * 0.55); g.add(prop); this.rotor = prop;
+        const tailplane = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.62, 0.09, 0.85), paint);
+        tailplane.position.set(0, c.h * 0.55, c.l * 0.52); g.add(tailplane);
+      }
+    } else if (c.kind === 'boat') {
+      const hull = new THREE.Mesh(extrudeProfile(PROFILES.boat, c.w, 0.05), paint);
+      hull.position.y = 0.10; g.add(hull);
+      const deck = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.86, 0.07, c.l * 0.72), mat(0xdad5c8));
+      deck.position.set(0, 0.78, 0.1); g.add(deck);
+      const screen = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.66, 0.42, 0.06), glass);
+      screen.position.set(0, 1.0, -0.75); g.add(screen);
+      const console_ = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.4, 0.24, 0.35), dark);
+      console_.position.set(0, 0.9, -0.55); g.add(console_);
+      const motor = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.45, 0.3), dark);
+      motor.position.set(0, 0.55, c.l * 0.48); g.add(motor);
+    } else if (c.kind === 'bike') {
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.42, 0.30, c.l * 0.66), paint);
+      frame.position.y = c.h * 0.48; g.add(frame);
+      const tank = new THREE.Mesh(new THREE.CapsuleGeometry(0.13, 0.30, 4, 12), paint);
+      tank.rotation.x = Math.PI / 2; tank.position.set(0, c.h * 0.66, -0.10); g.add(tank);
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.36, 0.10, c.l * 0.30), dark);
+      seat.position.set(0, c.h * 0.72, c.l * 0.16); g.add(seat);
+      const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, c.w * 0.95, 6), chrome);
+      bar.rotation.z = Math.PI / 2; bar.position.set(0, c.h * 0.82, -c.l * 0.30); g.add(bar);
+      const fork = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, c.h * 0.55, 6), chrome);
+      fork.rotation.x = -0.30; fork.position.set(0, c.h * 0.55, -c.l * 0.34); g.add(fork);
+      const rider = makeHuman({ simple: true, shirt: 0x2c3e50, pants: 0x1b1f24, skin: 0xd8a878 });
+      rider.root.position.set(0, 0.28, 0.05);
+      rider.legL.rotation.x = -1.2; rider.legR.rotation.x = -1.2;
+      rider.armL.rotation.x = -1.1; rider.armR.rotation.x = -1.1;
+      g.add(rider.root);
+      const wr = 0.33;
+      const tire = new THREE.CylinderGeometry(wr, wr, 0.11, 18);
+      tire.rotateZ(Math.PI / 2);
+      [-c.l * 0.42, c.l * 0.42].forEach((z) => {
+        const w = new THREE.Mesh(tire, mat(0x0e0f11));
+        const rim = new THREE.Mesh(new THREE.CylinderGeometry(wr * 0.55, wr * 0.55, 0.12, 10), mat(0x9aa2ab));
+        w.add(rim);
+        w.position.set(0, wr, z); w.castShadow = true;
+        g.add(w); this.wheels.push(w);
+      });
+    } else if (c.kind === 'big') {
+      const body = new THREE.Mesh(extrudeProfile(PROFILES[this.type], c.w, 0.06), paint);
+      g.add(body);
+      // window band
+      const bandW = c.w * 0.94;
+      if (this.type === 'bus') {
+        const band = new THREE.Mesh(new THREE.BoxGeometry(bandW, 0.85, c.l * 0.90), glass);
+        band.position.set(0, 2.35, 0); g.add(band);
+        const door = new THREE.Mesh(new THREE.BoxGeometry(bandW * 0.98, 1.9, 0.05), glass);
+        door.position.set(0, 1.35, c.l * 0.46); g.add(door);
+      } else {
+        const cab = new THREE.Mesh(new THREE.BoxGeometry(bandW, 0.80, 0.06), glass);
+        cab.position.set(0, 2.45, c.l * 0.5 - 0.12); g.add(cab);
+        const side = new THREE.Mesh(new THREE.BoxGeometry(bandW, 0.72, 1.5), glass);
+        side.position.set(0, 2.45, c.l * 0.5 - 1.0); g.add(side);
+        const cargo = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.98, 2.35, c.l * 0.58), mat(0xd9d5cc));
+        cargo.position.set(0, 1.65, -c.l * 0.14); g.add(cargo);
+        for (let i = -1; i <= 1; i++) {
+          const rail = new THREE.Mesh(new THREE.BoxGeometry(c.w * 1.0, 0.06, 0.08), chrome);
+          rail.position.set(0, 1.1 + i * 0.55, -c.l * 0.14); g.add(rail);
+        }
+      }
+      [-1, 1].forEach((sx) => {
+        const hl = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.18, 0.06), head);
+        hl.position.set(sx * c.w * 0.30, 0.72, c.l * 0.5); g.add(hl);
+        const tl = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.22, 0.06), tail);
+        tl.position.set(sx * c.w * 0.32, 0.75, -c.l * 0.5); g.add(tl);
+      });
+      const wr = this.type === 'bus' ? 0.52 : 0.55;
+      addWheels(wr, c.w * 0.5 - 0.04, c.l * 0.32, -c.l * 0.34);
+    } else {
+      // ---- cars ----
+      const body = new THREE.Mesh(extrudeProfile(PROFILES[this.type] || PROFILES.sedan, c.w, 0.06), paint);
+      g.add(body);
+
+      // glass band: slightly wider than the shell so it reads as windows
+      const cabin = {
+        sedan: [[-1.02,1.06],[-0.34,1.40],[0.54,1.39],[1.14,1.02]],
+        sports: [[-0.92,0.86],[-0.10,1.18],[0.62,1.08],[1.24,0.88]],
+        supercar: [[-1.02,0.72],[-0.14,1.02],[0.52,0.94],[1.12,0.78]],
+      }[this.type] || [[-1.02,1.06],[-0.34,1.40],[0.54,1.39],[1.14,1.02]];
+      const glassGeo = extrudeProfile(cabin, c.w * 0.96, 0.03);
+      glassGeo.computeBoundingBox();
+      const bb = glassGeo.boundingBox;
+      const cy = (bb.min.y + bb.max.y) / 2;
+      glassGeo.translate(0, -cy, 0);
+      glassGeo.scale(1.05, 1.02, 1.0);
+      glassGeo.translate(0, cy, 0);
+      glassGeo.computeVertexNormals();
+      const band = new THREE.Mesh(glassGeo, glass);
+      g.add(band);
+
+      // bumpers, lights, mirrors
+      const frontBumper = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.96, 0.20, 0.16), paintDark);
+      frontBumper.position.set(0, 0.40, c.l * 0.49); g.add(frontBumper);
+      const rearBumper = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.96, 0.20, 0.16), paintDark);
+      rearBumper.position.set(0, 0.40, -c.l * 0.49); g.add(rearBumper);
+      const grille = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.5, 0.13, 0.05), dark);
+      grille.position.set(0, 0.60, c.l * 0.50); g.add(grille);
+      [-1, 1].forEach((sx) => {
+        const hl = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.13, 0.07), head);
+        hl.position.set(sx * c.w * 0.31, 0.72, c.l * 0.495); g.add(hl);
+        const tl = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.11, 0.07), tail);
+        tl.position.set(sx * c.w * 0.33, 0.76, -c.l * 0.495); g.add(tl);
+        const mirror = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.09, 0.10), paintDark);
+        mirror.position.set(sx * (c.w * 0.52), 0.98, c.l * 0.13); g.add(mirror);
+      });
+      if (this.type === 'supercar' || this.type === 'sports') {
+        const wing = new THREE.Mesh(new THREE.BoxGeometry(c.w * 0.92, 0.06, 0.34), paintDark);
+        wing.position.set(0, 0.86, -c.l * 0.44); g.add(wing);
+        [-1, 1].forEach((sx) => {
+          const stay = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.20, 0.12), dark);
+          stay.position.set(sx * c.w * 0.34, 0.76, -c.l * 0.44); g.add(stay);
+        });
+      }
+      addWheels(0.345, c.w * 0.5 - 0.03, c.l * 0.31, -c.l * 0.31);
     }
 
-    g.traverse((o) => { if (o.isMesh) { o.castShadow = true; } });
+    g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
     this.model = g;
     this.root.add(g);
-    this.built = true;
   }
 
   place(x, z, heading = 0) {
@@ -355,24 +551,18 @@ export class Vehicle {
     let throttle = driver ? input.throttle || 0 : 0;
     let steerIn = driver ? input.steer || 0 : 0;
     let brake = driver ? input.brake || 0 : 0;
-
     if (!driver) { throttle = input.throttle || 0; steerIn = input.steer || 0; }
 
     const maxSpeed = c.maxSpeed * (1 - this.damage * 0.004);
-    const accel = c.accel;
-
     if (brake > 0.1) this.speed = damp(this.speed, 0, 4.5 * brake, dt);
-    else if (throttle !== 0) {
-      this.speed += throttle * accel * dt * (1 - Math.abs(this.speed) / (maxSpeed * 1.35));
-    } else {
-      this.speed = damp(this.speed, 0, isAir ? 0.3 : 0.9, dt);
-    }
+    else if (throttle !== 0) this.speed += throttle * c.accel * dt * (1 - Math.abs(this.speed) / (maxSpeed * 1.35));
+    else this.speed = damp(this.speed, 0, isAir ? 0.3 : 0.9, dt);
     this.speed = clamp(this.speed, -maxSpeed * 0.35, maxSpeed);
 
-    // steering scales with speed
     const speedFactor = clamp(Math.abs(this.speed) / 6, 0, 1);
     this.steer = damp(this.steer, steerIn, 8, dt);
-    this.heading += this.steer * c.turn * dt * speedFactor * Math.sign(this.speed || 1) * (isBike ? 1.25 : 1);
+    // positive steer (stick right) turns right: heading increases -> yaw right
+    this.heading -= this.steer * c.turn * dt * speedFactor * Math.sign(this.speed || 1) * (isBike ? 1.25 : 1);
 
     const fwdX = Math.sin(this.heading), fwdZ = Math.cos(this.heading);
     const nx = this.pos.x + fwdX * this.speed * dt;
@@ -398,13 +588,11 @@ export class Vehicle {
     } else {
       this.pos.x = nx; this.pos.z = nz;
       const gy = heightAt(this.pos.x, this.pos.z);
-      const targetY = Math.max(gy, WATER_LEVEL - 0.2) + 0.15;
-      this.pos.y = damp(this.pos.y, targetY, 10, dt);
-      // slope-based pitch
+      this.pos.y = damp(this.pos.y, Math.max(gy, WATER_LEVEL - 0.2) + 0.15, 10, dt);
       const ahead = heightAt(this.pos.x + fwdX * 3, this.pos.z + fwdZ * 3);
       const behind = heightAt(this.pos.x - fwdX * 3, this.pos.z - fwdZ * 3);
       this.pitch = damp(this.pitch, clamp((behind - ahead) * 0.12, -0.4, 0.4), 6, dt);
-      this.roll = damp(this.roll, -this.steer * clamp(this.speed / maxSpeed, 0, 1) * 0.14, 5, dt);
+      this.roll = damp(this.roll, this.steer * clamp(this.speed / maxSpeed, 0, 1) * 0.12, 5, dt);
       const spin = this.speed * dt * 2.2;
       this.wheels.forEach((w) => { w.rotation.x += spin; });
     }
@@ -412,7 +600,6 @@ export class Vehicle {
     this.root.position.copy(this.pos);
     this.root.rotation.set(this.pitch, this.heading, this.roll, 'YXZ');
 
-    // collision damage with world / building-ish rough check
     if (!isAir && Math.abs(this.speed) > maxSpeed * 0.75 && heightAt(this.pos.x, this.pos.z) > this.pos.y + 1.6) {
       this.speed *= 0.3; this.damage = Math.min(100, this.damage + 6);
     }
@@ -422,28 +609,29 @@ export class Vehicle {
   get speedKmh() { return Math.abs(this.speed) * 3.6; }
 }
 
-// ------------------------------------------------------------------
+// ==================================================================
 // PEDESTRIANS
-// ------------------------------------------------------------------
-const PED_COLORS = [0x2f6f8f, 0x8f2f2f, 0x2f8f5f, 0x6f4f8f, 0xcfcfcf, 0x333333, 0xd8b070];
+// ==================================================================
+const SHIRTS = [0x2f6f8f, 0x8f2f2f, 0x2f8f5f, 0x6f4f8f, 0xcfcfcf, 0x2b2f36, 0xd8b070, 0xb84a6f];
+const PANTS = [0x2b3340, 0x3d3a33, 0x1f2733, 0x4a4f57, 0x5a4632];
+const SKINS = [0xd8a878, 0xc98f62, 0x9c6b45, 0x6f4a2f, 0xe8c39e];
+const HAIRS = [0x241a12, 0x120d09, 0x4a2f1c, 0x2b2b2b];
 
 export class Pedestrian {
   constructor(scene, rng) {
-    this.root = new THREE.Group();
-    const shirt = PED_COLORS[Math.floor(rng() * PED_COLORS.length)];
-    const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.65, 0.3), mat(shirt));
-    torso.position.y = 1.15; this.root.add(torso);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), mat(0xd8a878));
-    head.position.y = 1.6; this.root.add(head);
-    const legGeo = new THREE.BoxGeometry(0.17, 0.7, 0.19); legGeo.translate(0, -0.35, 0);
-    this.legL = new THREE.Mesh(legGeo, mat(0x2b3340)); this.legL.position.set(-0.13, 0.8, 0);
-    this.legR = new THREE.Mesh(legGeo, mat(0x2b3340)); this.legR.position.set(0.13, 0.8, 0);
-    const armGeo = new THREE.BoxGeometry(0.13, 0.55, 0.15); armGeo.translate(0, -0.27, 0);
-    this.armL = new THREE.Mesh(armGeo, mat(shirt)); this.armL.position.set(-0.32, 1.42, 0);
-    this.armR = new THREE.Mesh(armGeo, mat(shirt)); this.armR.position.set(0.32, 1.42, 0);
-    this.root.add(this.legL, this.legR, this.armL, this.armR);
-    this.root.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+    const h = makeHuman({
+      simple: true,
+      shirt: SHIRTS[Math.floor(rng() * SHIRTS.length)],
+      pants: PANTS[Math.floor(rng() * PANTS.length)],
+      skin: SKINS[Math.floor(rng() * SKINS.length)],
+      hair: HAIRS[Math.floor(rng() * HAIRS.length)],
+      scale: 0.94 + rng() * 0.12,
+    });
+    this.root = h.root;
+    this.body = h.body;
+    this.legL = h.legL; this.legR = h.legR;
+    this.armL = h.armL; this.armR = h.armR;
+    this.head = h.head;
     scene.add(this.root);
     this.phase = rng() * 6;
     this.speed = 1.1 + rng() * 0.7;
@@ -464,7 +652,7 @@ export class Pedestrian {
     this.root.rotation.y = Math.atan2(dir.x, dir.z) + this.alert * Math.atan2(playerPos.x - this.root.position.x, playerPos.z - this.root.position.z) * 0.6;
     this.phase += dt * (3 + sp * 1.6);
     const s = Math.sin(this.phase * 2);
-    this.legL.rotation.x = s * 0.6; this.legR.rotation.x = -s * 0.6;
+    this.legL.rotation.x = s * 0.62; this.legR.rotation.x = -s * 0.62;
     this.armL.rotation.x = -s * 0.5; this.armR.rotation.x = s * 0.5;
   }
   pickTarget(rng = Math.random) {
@@ -473,23 +661,36 @@ export class Pedestrian {
   }
 }
 
-// ------------------------------------------------------------------
+// ==================================================================
 // ANIMALS
-// ------------------------------------------------------------------
+// ==================================================================
 export class Animal {
   constructor(scene, rng) {
     this.root = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.6, 1.25), new THREE.MeshLambertMaterial({ color: 0x8a6b4a }));
-    body.position.y = 0.95; this.root.add(body);
-    const neck = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.55, 0.24), new THREE.MeshLambertMaterial({ color: 0x8a6b4a }));
-    neck.position.set(0, 1.35, -0.55); this.root.add(neck);
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.5), new THREE.MeshLambertMaterial({ color: 0x9c7c58 }));
-    head.position.set(0, 1.6, -0.75); this.root.add(head);
-    const legGeo = new THREE.BoxGeometry(0.12, 0.72, 0.12); legGeo.translate(0, -0.36, 0);
+    const hide = mat(0x8a6b4a), hideLight = mat(0xa8835c), dark = mat(0x5c4429);
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.26, 0.72, 6, 12), hide);
+    torso.rotation.x = Math.PI / 2; torso.position.y = 0.95; this.root.add(torso);
+    const chest = new THREE.Mesh(new THREE.SphereGeometry(0.30, 12, 10), hide);
+    chest.position.set(0, 1.0, -0.42); this.root.add(chest);
+    const neck = new THREE.Mesh(new THREE.CapsuleGeometry(0.10, 0.42, 4, 10), hide);
+    neck.rotation.x = -0.5; neck.position.set(0, 1.32, -0.58); this.root.add(neck);
+    const head = new THREE.Mesh(new THREE.CapsuleGeometry(0.10, 0.20, 4, 10), hideLight);
+    head.rotation.x = Math.PI / 2.2; head.position.set(0, 1.58, -0.78); this.root.add(head);
+    [-1, 1].forEach((s) => {
+      const ear = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.16, 6), hide);
+      ear.position.set(s * 0.08, 1.72, -0.72); ear.rotation.z = s * 0.3; this.root.add(ear);
+    });
+    const tail = new THREE.Mesh(new THREE.CapsuleGeometry(0.045, 0.22, 3, 8), hideLight);
+    tail.position.set(0, 1.08, 0.55); tail.rotation.x = 0.7; this.root.add(tail);
     this.legs = [];
-    [[-0.2, -0.42], [0.2, -0.42], [-0.2, 0.42], [0.2, 0.42]].forEach(([x, z]) => {
-      const l = new THREE.Mesh(legGeo, new THREE.MeshLambertMaterial({ color: 0x6b5236 }));
-      l.position.set(x, 0.72, z); this.root.add(l); this.legs.push(l);
+    [[-0.17, -0.36], [0.17, -0.36], [-0.17, 0.34], [0.17, 0.34]].forEach(([x, z]) => {
+      const g = new THREE.Group();
+      g.position.set(x, 0.86, z);
+      const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.062, 0.28, 4, 8), hide);
+      thigh.position.y = -0.18; g.add(thigh);
+      const shin = new THREE.Mesh(new THREE.CapsuleGeometry(0.045, 0.30, 4, 8), dark);
+      shin.position.y = -0.52; g.add(shin);
+      this.root.add(g); this.legs.push(g);
     });
     this.root.traverse((o) => { if (o.isMesh) o.castShadow = true; });
     scene.add(this.root);
@@ -501,7 +702,7 @@ export class Animal {
     const d = this.root.position.distanceTo(playerPos);
     this.flee = damp(this.flee, d < 16 ? 1 : 0, 2, dt);
     const dir = new THREE.Vector3().subVectors(this.target, this.root.position); dir.y = 0;
-    if (dir.length() < 1.5) { this.pickTarget(); }
+    if (dir.length() < 1.5) this.pickTarget();
     dir.normalize();
     if (this.flee > 0.3) {
       const away = new THREE.Vector3().subVectors(this.root.position, playerPos).setY(0).normalize();
@@ -521,9 +722,9 @@ export class Animal {
   }
 }
 
-// ------------------------------------------------------------------
-// TRAFFIC CAR (simple AI that follows the road grid)
-// ------------------------------------------------------------------
+// ==================================================================
+// TRAFFIC
+// ==================================================================
 export class TrafficCar {
   constructor(scene, rng) {
     const types = ['sedan', 'sports', 'truck', 'bus'];
@@ -533,7 +734,6 @@ export class TrafficCar {
     this.dir = rng() < 0.5 ? 1 : -1;
     this.speed = 8 + rng() * 8;
     this.lane = 3;
-    this.stuck = 0;
     this.alive = true;
   }
   spawn(nearX, nearZ, rng) {
@@ -544,23 +744,19 @@ export class TrafficCar {
     this.v.speed = this.speed;
   }
   update(dt, playerPos) {
-    // follow current road line, turn at intersections occasionally
     const step = 40;
     const p = this.v.pos;
-    const onLine = this.axis === 'x' ? Math.abs(((p.z / step) % 1) - 0) : Math.abs(((p.x / step) % 1) - 0);
     let throttle = 1;
-    if (p.distanceTo(playerPos) < 14) { throttle = 0.2; }
+    if (p.distanceTo(playerPos) < 14) throttle = 0.2;
     if (Math.random() < dt * 0.15) {
       this.axis = this.axis === 'x' ? 'z' : 'x';
       this.dir = Math.random() < 0.5 ? 1 : -1;
     }
     this.v.update(dt, { throttle, steer: 0, brake: 0 }, null, false);
-    // keep on lane: gently steer toward lane line
-    const target = this.axis === 'x' ? this.dir * this.lane : this.dir * this.lane;
+    const target = this.dir * this.lane;
     const err = this.axis === 'x' ? (Math.round(p.z / step) * step + target) - p.z
                                   : (Math.round(p.x / step) * step + target) - p.x;
-    const cross = this.axis === 'x' ? err : err;
-    this.v.heading += clamp(cross * 0.03, -0.05, 0.05);
+    this.v.heading -= clamp(err * 0.03, -0.05, 0.05);
     if (Math.hypot(p.x, p.z) > CITY_RADIUS + 60) { this.axis = this.axis === 'x' ? 'z' : 'x'; this.dir = -this.dir; }
   }
   dispose(scene) { scene.remove(this.v.root); }

@@ -357,7 +357,9 @@ class Game {
       document.getElementById('loadfill').style.width = Math.min(100, pct) + '%';
       document.getElementById('loadtext').textContent = steps[Math.min(steps.length - 1, Math.floor(pct / 22))];
       if (pct < 100) setTimeout(tick, 90);
-      else setTimeout(() => { this.state = 'menu'; this.ui.show('menu'); }, 160);
+      else setTimeout(() => {
+        if (this.state === 'loading') { this.state = 'menu'; this.ui.show('menu'); }
+      }, 160);
     };
     setTimeout(tick, 120);
   }
@@ -597,10 +599,24 @@ class Game {
     this.missions.trackPlayer(this.player.pos);
     this.missions.update(dt, this.player.pos, !!this.player.vehicle);
 
-    // NPCs
-    for (const pd of this.peds) pd.update(dt, this.player.pos);
-    for (const an of this.animals) an.update(dt, this.player.pos);
-    for (const c of this.traffic) c.update(dt, this.player.pos);
+    // NPCs — honour the per-preset budget and cull by distance
+    const budgetPeds = p.maxPeds, budgetTraffic = p.maxTraffic;
+    const pp = this.player.pos;
+    this.peds.forEach((pd, i) => {
+      const on = i < budgetPeds && pd.root.position.distanceTo(pp) < 130;
+      pd.root.visible = on;
+      if (on) pd.update(dt, pp);
+    });
+    this.animals.forEach((an) => {
+      const on = an.root.position.distanceTo(pp) < 220;
+      an.root.visible = on;
+      if (on) an.update(dt, pp);
+    });
+    this.traffic.forEach((c, i) => {
+      const on = i < budgetTraffic && c.v.pos.distanceTo(pp) < 150;
+      c.v.root.visible = on;
+      if (on) c.update(dt, pp);
+    });
     this.events.update(dt);
 
     // HUD
