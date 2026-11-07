@@ -1,0 +1,6 @@
+node_modules/
+android/build/
+android/debug.keystore
+android/hs_err_pid*.log
+*.log
+.DS_Store
